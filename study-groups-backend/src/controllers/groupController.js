@@ -110,6 +110,15 @@ const getTimeWindowStart = (goal, timeWindow) => {
   return calculatedStart > goal.windowStart ? calculatedStart : goal.windowStart;
 };
 
+const getGoalCacheTtlSeconds = (goal) => {
+  if (!goal?.windowEnd) {
+    return 300;
+  }
+
+  const ttl = Math.ceil((new Date(goal.windowEnd).getTime() - Date.now()) / 1000);
+  return ttl > 0 ? ttl : 60;
+};
+
 const formatGoalPayload = (goal) => ({
   goalId: goal._id,
   title: goal.title,
@@ -126,7 +135,7 @@ const formatGoalPayload = (goal) => ({
 
 const createGroup = async (req, res) => {
   try {
-    const { name, description = "", memberEmails = [] } = req.body;
+    const { name, description = "", memberEmails = [], members: requestedMembers = [] } = req.body;
     const creatorId = req.user.userId;
     const creatorEmail = req.user.email;
 
@@ -145,7 +154,9 @@ const createGroup = async (req, res) => {
       );
     }
 
-    const uniqueEmails = [...new Set([...memberEmails, creatorEmail])]
+    const initialMembers =
+      Array.isArray(memberEmails) && memberEmails.length > 0 ? memberEmails : requestedMembers;
+    const uniqueEmails = [...new Set([...initialMembers, creatorEmail])]
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean);
 
@@ -285,7 +296,15 @@ const createGoal = async (req, res) => {
 
     const normalizedSubjects = normalizeSubjects(subjects || (subject ? [subject] : []));
 
-    if (!title || !title.trim() || normalizedSubjects.length === 0 || !totalTarget) {
+    const parsedTotalTarget = Number(totalTarget);
+
+    if (
+      !title ||
+      !title.trim() ||
+      normalizedSubjects.length === 0 ||
+      Number.isNaN(parsedTotalTarget) ||
+      parsedTotalTarget <= 0
+    ) {
       return sendError(
         res,
         400,
@@ -356,7 +375,7 @@ const createGoal = async (req, res) => {
       title: title.trim(),
       subjects: normalizedSubjects,
       metric: "questionsSolved",
-      totalTarget,
+      totalTarget: parsedTotalTarget,
       goalType,
       deadline: goalType === "deadline" ? endDate : null,
       recurringFrequency: goalType === "recurring" ? recurringFrequency : null,
@@ -451,8 +470,19 @@ const updateGoal = async (req, res) => {
       goal.subjects = normalizedSubjects;
     }
 
-    if (totalTarget) {
-      goal.totalTarget = totalTarget;
+    if (totalTarget !== undefined) {
+      const parsedTotalTarget = Number(totalTarget);
+
+      if (Number.isNaN(parsedTotalTarget) || parsedTotalTarget <= 0) {
+        return sendError(
+          res,
+          400,
+          "totalTarget must be a positive number",
+          "GOAL_VALIDATION_ERROR"
+        );
+      }
+
+      goal.totalTarget = parsedTotalTarget;
     }
 
     if (windowStart) {
@@ -561,29 +591,23 @@ const recordActivity = async (req, res) => {
       );
     }
 
-    const normalizedSubject = String(subject || "").trim().toLowerCase();
+    const providedSubject = String(subject || "").trim().toLowerCase();
 
-    if (!activeGoal.subjects.includes(normalizedSubject)) {
+    if (!providedSubject) {
+      return sendError(
+        res,
+        400,
+        "Activity subject is required",
+        "ACTIVITY_SUBJECT_REQUIRED"
+      );
+    }
+
+    if (!activeGoal.subjects.includes(providedSubject)) {
       return sendError(
         res,
         400,
         "Activity subject does not match the active goal",
         "GOAL_SUBJECT_MISMATCH"
-      );
-    }
-
-    const activityTime = timestamp ? new Date(timestamp) : new Date();
-
-    if (Number.isNaN(activityTime.getTime())) {
-      return sendError(res, 400, "Invalid activity timestamp", "INVALID_ACTIVITY_TIMESTAMP");
-    }
-
-    if (activityTime < activeGoal.windowStart || activityTime > activeGoal.windowEnd) {
-      return sendError(
-        res,
-        400,
-        "Activity timestamp must be within the active goal window",
-        "ACTIVITY_OUTSIDE_GOAL_WINDOW"
       );
     }
 
@@ -604,12 +628,27 @@ const recordActivity = async (req, res) => {
       );
     }
 
-    if (questionSubject !== normalizedSubject) {
+    if (providedSubject && providedSubject !== questionSubject) {
       return sendError(
         res,
         400,
         "Activity subject must match question subject",
         "QUESTION_SUBJECT_MISMATCH"
+      );
+    }
+
+    const activityTime = timestamp ? new Date(timestamp) : new Date();
+
+    if (Number.isNaN(activityTime.getTime())) {
+      return sendError(res, 400, "Invalid activity timestamp", "INVALID_ACTIVITY_TIMESTAMP");
+    }
+
+    if (activityTime < activeGoal.windowStart || activityTime > activeGoal.windowEnd) {
+      return sendError(
+        res,
+        400,
+        "Activity timestamp must be within the active goal window",
+        "ACTIVITY_OUTSIDE_GOAL_WINDOW"
       );
     }
 
@@ -621,7 +660,7 @@ const recordActivity = async (req, res) => {
         groupId,
         goalId: activeGoal._id,
         questionId,
-        subject: normalizedSubject,
+        subject: questionSubject,
         status: "solved",
         timeSpent: normalizedTimeSpent,
         timestamp: activityTime
@@ -698,9 +737,11 @@ const getLeaderboard = async (req, res) => {
 
     const normalizedSort = sort === "asc" ? "asc" : "desc";
     const appliedSubjects =
-    subjectFilter.length > 0
-      ? subjectFilter.filter((s) => activeGoal.subjects.includes(s))
-      : [];    const cacheKey = buildLeaderboardCacheKey(groupId, {
+      subjectFilter.length > 0
+        ? subjectFilter.filter((s) => activeGoal.subjects.includes(s))
+        : [];
+
+    const cacheKey = buildLeaderboardCacheKey(groupId, {
       metric,
       sort: normalizedSort,
       timeWindow,
@@ -884,7 +925,7 @@ const getLeaderboard = async (req, res) => {
       limit
     };
 
-    await setCache(cacheKey, responseData);
+    await setCache(cacheKey, responseData, getGoalCacheTtlSeconds(activeGoal));
 
     return sendSuccess(res, 200, "Leaderboard fetched successfully", responseData);
   } catch (error) {
@@ -917,17 +958,17 @@ const getProgress = async (req, res) => {
       );
     }
 
-    const cacheKey = buildProgressCacheKey(groupId);
-    const cached = await getCache(cacheKey);
-
-    if (cached) {
-      return sendSuccess(res, 200, "Progress fetched successfully", cached);
-    }
-
     const activeGoal = await getActiveGoalForGroup(groupId);
 
     if (!activeGoal) {
       return sendError(res, 404, "No active goal found for group", "ACTIVE_GOAL_NOT_FOUND");
+    }
+
+    const cacheKey = buildProgressCacheKey(groupId, activeGoal._id);
+    const cached = await getCache(cacheKey);
+
+    if (cached) {
+      return sendSuccess(res, 200, "Progress fetched successfully", cached);
     }
 
     await syncGroupActiveGoal(group, activeGoal._id);
@@ -1036,13 +1077,14 @@ const getProgress = async (req, res) => {
         user: row.email,
         solved: row.solvedCount,
         timeSpent: row.timeSpent,
-        contributionPercentage: Number(
-          ((row.solvedCount / activeGoal.totalTarget) * 100).toFixed(2)
-        )
+        contributionPercentage:
+          activeGoal.totalTarget > 0
+            ? Number(((row.solvedCount / activeGoal.totalTarget) * 100).toFixed(2))
+            : 0
       }))
     };
 
-    await setCache(cacheKey, responseData);
+    await setCache(cacheKey, responseData, getGoalCacheTtlSeconds(activeGoal));
 
     return sendSuccess(res, 200, "Progress fetched successfully", responseData);
   } catch (error) {

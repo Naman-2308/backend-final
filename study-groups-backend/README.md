@@ -1,211 +1,146 @@
-📚 Custom Study Groups with Live Leaderboards
+# Custom Study Groups Backend
 
-A scalable Node.js + Express + MongoDB backend for collaborative study groups featuring goal tracking, activity logging, real-time leaderboards, and Redis caching.
+Backend service for the assignment **"Custom Study Groups with Live Leaderboards"** using Node.js, Express, MongoDB, and Redis.
 
-🚀 Overview
+## Features
 
-This system allows users to:
+- JWT-protected APIs with Google OAuth login (`/auth/google`)
+- Study group lifecycle:
+  - one creator can own only one group
+  - members can belong to multiple groups
+- Goal management:
+  - one active goal per group
+  - deadline and recurring goal support
+  - goal update for creators
+- Activity logging with strict validation:
+  - status must be `solved`/`correct`
+  - subject must match goal and question
+  - timestamp must be inside goal window
+  - per-user question de-dupe per goal
+- Leaderboard:
+  - tie-aware ranking
+  - sorting, filtering, pagination
+  - includes current user rank/details
+- Progress endpoint:
+  - total solved
+  - percentage completion
+  - per-member breakdown
+- Redis cache with invalidation on writes and goal changes
 
-Form study groups
-Set shared learning goals
-Track individual contributions
-View real-time ranked leaderboards
-Monitor overall group progress
+## Tech Stack
 
-Built with a focus on:
+- Node.js + Express
+- MongoDB + Mongoose
+- Redis (optional fallback mode if unavailable)
+- Google OAuth (`google-auth-library`)
+- JWT (`jsonwebtoken`)
 
-Clean architecture
-Efficient aggregation queries
-Production-ready validation
-Scalable caching
+## Project Structure
 
-✨ Features
-
-🔐 Authentication
-Google OAuth-based login (via ID Token verification)
-JWT-based session management
-Secure protected routes using middleware
-
-👥 Study Groups
-One user can create only one group
-Users can join multiple groups
-Creator has elevated permissions (add members, manage goals)
-
-🎯 Goals
-Only one active goal per group
-Supports:
-Deadline-based goals
-Recurring goals (daily/weekly)
-Goal editing allowed only for creator
-
-📊 Activity Tracking
-Track solved questions per user
-Prevent duplicate solves per goal
-Enforce:
-Subject consistency
-Goal window validity
-
-🏆 Leaderboard
-Aggregation-based ranking
-Tie-aware ranking system
-Supports filters:
-Metric (solved, percentage, timeSpent)
-Subject
-Time window (daily, weekly, all)
-Sorting (asc, desc)
-Pagination (offset, limit)
-
-📈 Progress Tracking
-Total group progress
-Per-member contribution breakdown
-Percentage completion
-
-⚡ Performance
-Redis caching for:
-Leaderboard
-Progress
-Cache invalidation on updates
-
-🌱 Seed Data
-Preloaded subjects and questions for testing
-
-🧱 Tech Stack
-
-Backend: Node.js, Express
-Database: MongoDB (Mongoose ODM)
-Caching: Redis
-Auth: Google OAuth + JWT
-Other: Aggregation Pipelines, Modular Architecture
-
-📁 Project Structure
-
+```text
 src/
+  config/
   controllers/
+  data/
+  middlewares/
   models/
   routes/
-  middlewares/
   utils/
-  data/
 scripts/
+```
 
-⚙️ Setup Instructions
+## Environment Variables
 
-1. Install dependencies
-npm install
-2. Configure environment
-cp .env.example .env
-3. Add required variables
+Copy `.env.example` to `.env` and fill values:
+
+```env
 PORT=5000
-MONGO_URI=your_mongodb_uri
-REDIS_HOST=localhost
-REDIS_PORT=6379
-JWT_SECRET=your_secret
+MONGO_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/study_groups
+REDIS_URL=redis://127.0.0.1:6379
+JWT_SECRET=replace_with_a_secure_secret
 JWT_EXPIRES_IN=7d
-GOOGLE_CLIENT_ID=your_google_client_id
-4. Start services
-Ensure MongoDB is running
-Ensure Redis is running
-5. Seed data
+GOOGLE_CLIENT_ID=your_google_oauth_client_id
+```
+
+## Local Setup
+
+```bash
+npm install
 npm run seed
-6. Run server
 npm run dev
+```
 
-🔑 Authentication Flow
+Health check:
 
-POST /auth/google
+```bash
+curl http://127.0.0.1:5000/health
+```
 
-Send Google idToken from frontend:
+## Authentication Flow
 
+1. Frontend obtains Google `idToken`
+2. Call `POST /auth/google` with:
+
+```json
 {
   "idToken": "google_id_token_here"
 }
+```
 
-Returns:
+3. Use returned JWT in protected APIs:
 
-JWT token
-User profile
-GET /auth/me
-
-Header:
-
+```text
 Authorization: Bearer <token>
+```
 
-Returns authenticated user.
+## API Endpoints
 
-📡 API Endpoints
+### Auth
 
-Auth
-POST /auth/google
-GET /auth/me
-Groups
-POST /groups → Create group
-POST /groups/:id/member → Add member
-POST /groups/:id/goal → Create goal
-PUT /groups/:id/goal/:goalId → Update goal
-Activity
-POST /groups/:id/activity → Record activity
-Analytics
-GET /groups/:id/leaderboard
-GET /groups/:id/progress
+- `POST /auth/google`
+- `GET /auth/me`
 
-🔄 Sample Flow
+### Groups
 
-1. Login
-{
-  "idToken": "..."
-}
-2. Create Group
-{
-  "name": "Physics Achievers",
-  "description": "Weekly problem-solving group",
-  "memberEmails": ["bob@example.com"]
-}
-3. Create Goal
-{
-  "title": "Solve 10 physics questions",
-  "subject": "physics",
-  "totalTarget": 10,
-  "deadline": "2026-12-31T23:59:59.000Z"
-}
-4. Record Activity
-{
-  "questionId": "<question-id>",
-  "subject": "physics",
-  "status": "solved",
-  "timeSpent": 120
-}
+- `POST /groups` - create group
+- `POST /groups/:id/member` - add member (creator only)
+- `POST /groups/:id/goal` - create goal (creator only)
+- `PUT /groups/:id/goal/:goalId` - update active goal (creator only)
+- `POST /groups/:id/activity` - record activity
+- `GET /groups/:id/leaderboard` - get leaderboard
+- `GET /groups/:id/progress` - get group progress
 
-📊 Leaderboard Filters
+## Leaderboard Query Params
 
-Parameter	Values
-metric	solved, percentage, timeSpent
-subject	physics,math (comma-separated)
-timeWindow	daily, weekly, all
-sort	asc, desc
-offset	number
-limit	number
+- `metric`: `solved` | `percentage` | `timeSpent`
+- `subject`: comma-separated values (for subject filtering)
+- `timeWindow`: `daily` | `weekly` | `all`
+- `sort`: `asc` | `desc`
+- `offset`: number
+- `limit`: number (default 10, max 100)
+
 Example:
-/groups/:id/leaderboard?metric=solved&subject=math&timeWindow=weekly&sort=desc
 
-⚠️ Important Constraints
+```text
+/groups/:id/leaderboard?metric=solved&subject=mathematics&timeWindow=weekly&sort=desc&offset=0&limit=10
+```
 
-One group per creator
-One active goal per group
-One question solve per user per goal
-Activity must:
-Match goal subject
-Be within goal time window
+## Standard Response Format
 
-📦 Response Format
+Success:
 
-Success
+```json
 {
   "success": true,
   "message": "Readable message",
   "data": {},
   "error": null
 }
-Error
+```
+
+Error:
+
+```json
 {
   "success": false,
   "message": "Readable message",
@@ -215,43 +150,19 @@ Error
     "details": "Optional details"
   }
 }
+```
 
-🚀 Deployment Notes
+## Deployment Checklist
 
-Use MongoDB Atlas for production
-Use Redis Cloud / Upstash for hosted caching
-Set environment variables in hosting platform
-Recommended platforms:
-Render
-Railway
-AWS / EC2
+- Set all environment variables in hosting platform
+- Ensure MongoDB and Redis are reachable from deployed runtime
+- Run seed once on target DB (if required for demo data)
+- Verify:
+  - `GET /health`
+  - auth flow (`/auth/google`, `/auth/me`)
+  - create group -> create goal -> record activity -> leaderboard/progress
 
-🧪 Testing
+## Notes
 
-Use Postman or Thunder Client
-Test flow:
-Auth
-Create group
-Create goal
-Record activity
-Fetch leaderboard
-
-📌 Assumptions
-
-Google ID token is trusted (verified via backend)
-Subjects are normalized (lowercase)
-Questions are pre-seeded
-No role-based access beyond creator/member
-🔮 Future Improvements
-Real-time updates via WebSockets
-Notifications for goal progress
-Multi-goal history tracking
-UI dashboard integration
-
-✅ Final Notes
-
-This implementation emphasizes:
-Clean API design
-Efficient MongoDB aggregation
-Real-world backend practices
-Scalability and performance
+- Time handling is UTC (`Date`/ISO timestamps).
+- If Redis is unavailable, APIs continue in fallback mode without cache.
