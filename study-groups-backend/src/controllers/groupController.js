@@ -457,12 +457,16 @@ const updateGoal = async (req, res) => {
 
     if (windowStart) {
       const startDate = new Date(windowStart);
-
+    
       if (Number.isNaN(startDate.getTime())) {
         return sendError(res, 400, "Invalid windowStart", "INVALID_WINDOW_START");
       }
-
+    
       goal.windowStart = startDate;
+    
+      if (goal.goalType === "recurring" && goal.recurringFrequency) {
+        goal.windowEnd = computeRecurringWindowEnd(startDate, goal.recurringFrequency);
+      }
     }
 
     if (deadline) {
@@ -694,8 +698,9 @@ const getLeaderboard = async (req, res) => {
 
     const normalizedSort = sort === "asc" ? "asc" : "desc";
     const appliedSubjects =
-      activeGoal.subjects.length > 1 && subjectFilter.length > 0 ? subjectFilter : [];
-    const cacheKey = buildLeaderboardCacheKey(groupId, {
+    subjectFilter.length > 0
+      ? subjectFilter.filter((s) => activeGoal.subjects.includes(s))
+      : [];    const cacheKey = buildLeaderboardCacheKey(groupId, {
       metric,
       sort: normalizedSort,
       timeWindow,

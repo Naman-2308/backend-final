@@ -1,22 +1,44 @@
 const User = require("../models/User");
 const { signAccessToken } = require("../utils/jwt");
 const { sendError, sendSuccess } = require("../utils/apiResponse");
+const { OAuth2Client } = require("google-auth-library");
 
-// Mock Google OAuth entry point for assignment/demo purposes.
-// In production, the Google token would be verified server-side first.
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
 const googleLogin = async (req, res) => {
   try {
-    const { googleId, email, name, avatar } = req.body;
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return sendError(
+        res,
+        400,
+        "Google idToken is required",
+        "ID_TOKEN_REQUIRED"
+      );
+    }
+
+    // ✅ Verify token with Google
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+
+    const {
+      sub: googleId,
+      email,
+      name,
+      picture: avatar
+    } = payload;
 
     if (!email || !name) {
       return sendError(
         res,
         400,
-        "Email and name are required",
-        "VALIDATION_ERROR",
-        {
-          requiredFields: ["email", "name"]
-        }
+        "Invalid Google token payload",
+        "INVALID_GOOGLE_TOKEN"
       );
     }
 
@@ -26,19 +48,22 @@ const googleLogin = async (req, res) => {
 
     if (!user) {
       user = await User.create({
-        googleId: googleId || normalizedEmail,
+        googleId,
         email: normalizedEmail,
         name: name.trim(),
-        ...(avatar ? { avatar } : {})
+        avatar
       });
     } else {
-      user.googleId = googleId || user.googleId || normalizedEmail;
+      user.googleId = googleId;
       user.name = name.trim();
-      user.avatar = avatar || user.avatar;
+      user.avatar = avatar;
       await user.save();
     }
 
-    const accessToken = signAccessToken(user);
+    const accessToken = signAccessToken({
+      userId: user._id,
+      email: user.email
+    });
 
     return sendSuccess(res, 200, "Authentication successful", {
       user: {
@@ -52,9 +77,9 @@ const googleLogin = async (req, res) => {
   } catch (error) {
     return sendError(
       res,
-      500,
-      "Authentication failed",
-      "AUTHENTICATION_ERROR",
+      401,
+      "Google authentication failed",
+      "GOOGLE_AUTH_FAILED",
       error.message
     );
   }

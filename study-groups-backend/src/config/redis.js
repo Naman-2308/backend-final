@@ -34,5 +34,7 @@ const connectRedis = async () => {
   return redisClient;
 };
 
-module.exports = redisClient;
-module.exports.connectRedis = connectRedis;
+module.exports = {
+  redisClient,
+  connectRedis
+};

@@ -6,26 +6,40 @@ const getJwtSecret = () => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET is not configured");
   }
-
   return process.env.JWT_SECRET;
 };
 
-const signAccessToken = (user) => {
+const signAccessToken = (payload) => {
+  if (!payload) {
+    throw new Error("Payload is required for token signing");
+  }
+
+  const userId = payload.userId || payload._id;
+
+  if (!userId) {
+    throw new Error("userId is required in token payload");
+  }
+
   return jwt.sign(
     {
-      userId: user._id,
-      email: user.email,
-      name: user.name
+      userId: String(userId),
+      email: payload.email,
+      name: payload.name
     },
     getJwtSecret(),
     {
-      expiresIn: JWT_EXPIRES_IN
+      expiresIn: JWT_EXPIRES_IN,
+      issuer: "study-groups-app",
+      audience: "study-groups-users"
     }
   );
 };
 
 const verifyAccessToken = (token) => {
-  return jwt.verify(token, getJwtSecret());
+  return jwt.verify(token, getJwtSecret(), {
+    issuer: "study-groups-app",
+    audience: "study-groups-users"
+  });
 };
 
 module.exports = {

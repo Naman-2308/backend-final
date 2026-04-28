@@ -9,7 +9,7 @@ const app = express();
 
 // ALWAYS before routes:
 app.use(cors());
-app.use(express.json());             // <---- this line must come before app.use("/groups", ...)
+app.use(express.json());            
 
 app.get("/health", (req, res) => {
   res.json({
