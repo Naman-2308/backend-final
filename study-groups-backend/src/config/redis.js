@@ -1,10 +1,15 @@
 const redis = require("redis");
 
+const REDIS_URL = process.env.REDIS_URL;
+
 const redisClient = redis.createClient({
+  url: REDIS_URL,
   socket: {
-    host: process.env.REDIS_HOST || "127.0.0.1",
-    port: Number(process.env.REDIS_PORT || 6379)
-  }
+    reconnectStrategy: (retries) => {
+      if (retries > 5) return new Error("Redis retry limit reached");
+      return Math.min(retries * 200, 3000);
+    },
+  },
 });
 
 let isConnecting = false;
@@ -14,10 +19,19 @@ redisClient.on("error", (err) => {
 });
 
 redisClient.on("connect", () => {
-  console.log("Redis Connected");
+  console.log("Redis connection established");
+});
+
+redisClient.on("ready", () => {
+  console.log("Redis ready to use");
 });
 
 const connectRedis = async () => {
+  if (!REDIS_URL) {
+    console.warn("⚠️ REDIS_URL missing. Redis disabled.");
+    return null;
+  }
+
   if (redisClient.isReady || isConnecting) {
     return redisClient;
   }
@@ -25,16 +39,16 @@ const connectRedis = async () => {
   try {
     isConnecting = true;
     await redisClient.connect();
-  } catch (error) {
-    console.error("Redis connection unavailable:", error.message);
+    return redisClient;
+  } catch (err) {
+    console.error("Redis connection failed:", err.message);
+    return null;
   } finally {
     isConnecting = false;
   }
-
-  return redisClient;
 };
 
 module.exports = {
   redisClient,
-  connectRedis
+  connectRedis,
 };

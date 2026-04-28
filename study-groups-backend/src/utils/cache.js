@@ -1,51 +1,67 @@
 const { redisClient } = require("../config/redis");
 
-const CACHE_TTL_SECONDS = 60;
-
-const buildLeaderboardCacheKey = (groupId, options = {}) => {
-  const metric = options.metric || "solved";
-  const sort = options.sort || "desc";
-  const limit = String(options.limit ?? 10);
-  const offset = String(options.offset ?? 0);
-  const timeWindow = options.timeWindow || "all";
-  const subjects = Array.isArray(options.subjects) ? options.subjects.join(",") : "";
-
-  return `group:${groupId}:leaderboard:${metric}:${sort}:${timeWindow}:${subjects}:${limit}:${offset}`;
+const getClient = () => {
+  if (!redisClient || !redisClient.isReady) return null;
+  return redisClient;
 };
 
-const buildProgressCacheKey = (groupId) => {
-  return `group:${groupId}:progress`;
+// -------------------- GET --------------------
+const get = async (key) => {
+  const client = getClient();
+  if (!client) return null;
+
+  try {
+    const value = await client.get(key);
+    return value ? JSON.parse(value) : null;
+  } catch (err) {
+    console.error("Redis GET error:", err.message);
+    return null;
+  }
 };
 
-const getCache = async (key) => {
-  if (!redisClient.isReady) return null;
+// -------------------- SET --------------------
+const set = async (key, value, ttl = 3600) => {
+  const client = getClient();
+  if (!client) return;
 
-  const value = await redisClient.get(key);
-  return value ? JSON.parse(value) : null;
+  try {
+    await client.set(key, JSON.stringify(value), {
+      EX: ttl,
+    });
+  } catch (err) {
+    console.error("Redis SET error:", err.message);
+  }
 };
 
-const setCache = async (key, value, ttlSeconds = CACHE_TTL_SECONDS) => {
-  if (!redisClient.isReady) return;
+// -------------------- DELETE --------------------
+const del = async (key) => {
+  const client = getClient();
+  if (!client) return;
 
-  await redisClient.set(key, JSON.stringify(value), {
-    EX: ttlSeconds
-  });
+  try {
+    await client.del(key);
+  } catch (err) {
+    console.error("Redis DEL error:", err.message);
+  }
 };
 
-const invalidateGroupCache = async (groupId) => {
-  if (!redisClient.isReady) return;
+// -------------------- CLEAR PATTERN --------------------
+const clearPattern = async (pattern) => {
+  const client = getClient();
+  if (!client) return;
 
-  const pattern = `group:${groupId}:*`;
-
-  for await (const key of redisClient.scanIterator({ MATCH: pattern })) {
-    await redisClient.del(key);
+  try {
+    for await (const key of client.scanIterator({ MATCH: pattern })) {
+      await client.del(key);
+    }
+  } catch (err) {
+    console.error("Redis CLEAR error:", err.message);
   }
 };
 
 module.exports = {
-  buildLeaderboardCacheKey,
-  buildProgressCacheKey,
-  getCache,
-  setCache,
-  invalidateGroupCache
+  get,
+  set,
+  del,
+  clearPattern,
 };

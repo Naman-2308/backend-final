@@ -14,24 +14,33 @@ let server;
 
 const startServer = async () => {
   try {
-    // 1. Connect DB
+    // =========================
+    // 1. DATABASE CONNECTION
+    // =========================
     await connectDB();
     console.log("MongoDB connected");
 
-    // 2. Connect Redis 
-    try {
-      await connectRedis();
-      console.log("Redis connected");
-    } catch (err) {
-      console.warn("Redis not available, continuing without cache");
-    }
+    // =========================
+    // 2. REDIS CONNECTION (SAFE)
+    // =========================
+    const redisClient = await connectRedis();
 
-    // 3. Start server
+if (redisClient?.isReady) {
+  console.log("Redis enabled");
+} else {
+  console.log("Redis disabled (fallback mode)");
+}
+
+    // =========================
+    // 3. START SERVER
+    // =========================
     server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
 
-    // 4. Start background job ONLY after server is ready
+    // =========================
+    // 4. BACKGROUND JOBS
+    // =========================
     setInterval(async () => {
       try {
         await archiveExpiredGoals();
@@ -42,26 +51,36 @@ const startServer = async () => {
     }, 60 * 1000);
 
   } catch (error) {
-    console.error("Server startup failed:", error);
+    console.error("Server startup failed:", error.message);
     process.exit(1);
   }
 };
 
-// Graceful shutdown (VERY important for production readiness)
+// =========================
+// GRACEFUL SHUTDOWN
+// =========================
 const shutdown = async (signal) => {
   console.log(`\nReceived ${signal}. Shutting down gracefully...`);
 
-  if (server) {
-    server.close(() => {
-      console.log("HTTP server closed");
+  try {
+    if (server) {
+      server.close(() => {
+        console.log("HTTP server closed");
+        process.exit(0);
+      });
+    } else {
       process.exit(0);
-    });
-  } else {
-    process.exit(0);
+    }
+  } catch (err) {
+    console.error("Error during shutdown:", err.message);
+    process.exit(1);
   }
 };
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+// =========================
+// START APPLICATION
+// =========================
 startServer();
